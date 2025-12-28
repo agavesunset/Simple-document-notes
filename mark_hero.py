@@ -61,13 +61,13 @@ def parse_notes(raw_text):
         parts = parts[1:]
     elif parts and "---" not in parts[0]: 
         # 如果开头不是时间戳（比如老数据），把它当做第一条无头记录
-        entries.append({'header': '--- 旧数据 ---', 'body': parts[0].strip()})
+        entries.append({'header': '--- 旧数据 ---', 'body': parts[0].rstrip("\n")})
         parts = parts[1:]
 
     # 成对处理 (Header + Body)
     for i in range(0, len(parts) - 1, 2):
         header = parts[i].strip()
-        body = parts[i + 1].strip()
+        body = parts[i + 1].rstrip("\n")
         entries.append({'header': header, 'body': body})
 
     if len(parts) % 2 == 1:
@@ -87,6 +87,7 @@ class NoteManagerApp:
         self.dirty = False
         self.last_deleted = None
         self._resize_job = None
+        self.content_labels = []
         self.default_font = font.nametofont("TkDefaultFont")
         self.header_font = self.default_font.copy()
         self.header_font.configure(size=max(self.default_font.cget("size") - 1, 8))
@@ -113,7 +114,11 @@ class NoteManagerApp:
             lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         )
 
-        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw", width=480)
+        self.scroll_window_id = self.canvas.create_window(
+            (0, 0),
+            window=self.scrollable_frame,
+            anchor="nw"
+        )
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
 
         # 布局滚动区
@@ -141,19 +146,24 @@ class NoteManagerApp:
         self.refresh_ui()
 
         # 鼠标滚轮支持
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
         self.canvas.bind("<Enter>", self._bind_mousewheel)
         self.canvas.bind("<Leave>", self._unbind_mousewheel)
         self.root.bind("<Configure>", self._on_resize)
 
+    def _on_canvas_configure(self, event):
+        self.canvas.itemconfigure(self.scroll_window_id, width=event.width)
+        self._update_wraplength()
+
     def _bind_mousewheel(self, _event):
-        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
-        self.canvas.bind_all("<Button-4>", self._on_mousewheel)
-        self.canvas.bind_all("<Button-5>", self._on_mousewheel)
+        self.canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind("<Button-4>", self._on_mousewheel)
+        self.canvas.bind("<Button-5>", self._on_mousewheel)
 
     def _unbind_mousewheel(self, _event):
-        self.canvas.unbind_all("<MouseWheel>")
-        self.canvas.unbind_all("<Button-4>")
-        self.canvas.unbind_all("<Button-5>")
+        self.canvas.unbind("<MouseWheel>")
+        self.canvas.unbind("<Button-4>")
+        self.canvas.unbind("<Button-5>")
 
     def _on_resize(self, _event):
         if self._resize_job is not None:
@@ -162,7 +172,7 @@ class NoteManagerApp:
 
     def _apply_resize(self):
         self._resize_job = None
-        self.refresh_ui()
+        self._update_wraplength()
 
     def _on_note_modified(self, _event):
         if self.new_note_entry.edit_modified():
@@ -187,6 +197,7 @@ class NoteManagerApp:
         # 清空旧控件
         for widget in self.scrollable_frame.winfo_children():
             widget.destroy()
+        self.content_labels = []
 
         if not self.entries:
             lbl = ttk.Label(self.scrollable_frame, text="(暂无备注)", foreground="gray")
@@ -234,9 +245,17 @@ class NoteManagerApp:
             del_btn.pack(side="left")
 
             # 内容
-            wraplength = max(self.root.winfo_width() - 80, 300)
-            content_lbl = tk.Label(row_frame, text=item['body'], justify="left", anchor="w", wraplength=wraplength)
+            content_lbl = tk.Label(row_frame, text=item['body'], justify="left", anchor="w")
             content_lbl.pack(fill="x", padx=5, pady=(0, 5))
+            self.content_labels.append(content_lbl)
+        self._update_wraplength()
+
+    def _update_wraplength(self):
+        if not self.content_labels:
+            return
+        width = max(self.canvas.winfo_width() - 80, 300)
+        for label in self.content_labels:
+            label.configure(wraplength=width)
 
     def delete_entry(self, index):
         # 简单直接：从列表删掉，然后重绘 UI
